@@ -195,7 +195,7 @@ static void adccfg_data_rx_cb(usbd_device *usbd_dev, uint8_t ep)
 	int len = usbd_ep_read_packet(usbd_dev, 0x01, buf, 64);
 	if(len) {
 	  usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));
-	  usbd_ep_write_packet(usbd_dev,0x82,buf,len);
+	  while(usbd_ep_write_packet(usbd_dev,0x82,buf,len)==0){};
 	  }
 }
 static void adc_set_config(usbd_device *dev, uint16_t wValue)
