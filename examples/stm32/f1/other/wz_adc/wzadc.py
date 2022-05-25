@@ -61,7 +61,7 @@ def cmd(c):
 f=mydev.open()
 f.setConfiguration(mydev.configurations[0])
 f.claimInterface(0)
-cmd("\002\001\004\001\001\001\000\000\000")
-cmd("\001\002\000\001")
-cmd("\003")
+cmd(b"\002\001\004\001\001\001\000\000\000")
+cmd(b"\001\002\000\001")
+cmd(b"\003")
 

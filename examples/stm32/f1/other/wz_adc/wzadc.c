@@ -239,7 +239,7 @@ static void wz_adc_set_freq(uint8_t *buf, int len)
 
 static void wz_adc_stop(void)
 {
-   timer_disable_counter(TIM1);
+   timer_disable_counter(TIM3);
    adc_disable_dma(ADC1);
    {
           char msg[]="OK";
@@ -251,6 +251,13 @@ static void wz_adc_stop(void)
 static void wz_adc_read(void)
 {
   	  usbd_ep_write_packet(usbd_dev,0x82,adc_data,2*nof_chan);	        
+          return;
+}
+
+static void wz_tim3_read(void)
+{
+	uint32_t val = timer_get_counter(TIM3);
+  	  usbd_ep_write_packet(usbd_dev,0x82,&val,sizeof(val));	        
           return;
 }
 
@@ -276,16 +283,20 @@ static void wz_adc_start(void)
     dma_enable_transfer_complete_interrupt(DMA1, DMA_CHANNEL1);
     
     adc_set_regular_sequence(ADC1,nof_chan,chans);
+    adc_set_single_conversion_mode(ADC1);
+    adc_enable_scan_mode(ADC1);
     adc_enable_dma(ADC1);
+    dma_enable_channel(DMA1, DMA_CHANNEL1);
     //delay(100);
-    adc_enable_external_trigger_regular(ADC1,ADC_CR2_EXTSEL_TIM1_CC1);
-    // Prepare the TIMER1 for operation
-    timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
-    timer_continuous_mode(TIM1);
-    timer_set_prescaler(TIM1,smp_prescaler);
-    timer_set_period(TIM1,smp_period);
-    timer_set_master_mode(TIM1, TIM_CR2_MMS_UPDATE);
-    timer_enable_counter(TIM1);
+    adc_enable_external_trigger_regular(ADC1,ADC_CR2_EXTSEL_TIM3_TRGO);
+    // Prepare the TIMER3 for operation
+    timer_set_mode(TIM3, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+    timer_continuous_mode(TIM3);
+    timer_set_prescaler(TIM3,smp_prescaler);
+    timer_set_period(TIM3,smp_period);
+    timer_set_clock_division(TIM3,0);
+    timer_set_master_mode(TIM3, TIM_CR2_MMS_UPDATE);
+    timer_enable_counter(TIM3);
     {
           char msg[]="OK";
   	  usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));	        
@@ -315,6 +326,9 @@ static void adccfg_data_rx_cb(usbd_device *usbd_dev, uint8_t ep)
 	      break;
 	    case 4: // Read data
 	      wz_adc_read();
+	      break;
+	    case 5: // Read TIM3
+	      wz_tim3_read();
 	      break;
 	    default: // Unknown command
 	      {
@@ -375,7 +389,8 @@ int main(void)
         // Initialize DMA
         rcc_periph_clock_enable(RCC_DMA1);
         // Initialize TIMER1
-        rcc_periph_clock_enable(RCC_TIM1);
+        rcc_periph_clock_enable(RCC_TIM3);
+        rcc_periph_reset_pulse(RST_TIM3);
         // Initialize ADC:
         rcc_peripheral_enable_clock(&RCC_APB2ENR,RCC_APB2ENR_ADC1EN);
         adc_power_off(ADC1);
@@ -393,8 +408,8 @@ int main(void)
         adc_reset_calibration(ADC1);
         adc_calibrate_async(ADC1);
         while (adc_is_calibrating(ADC1)) {};
-        nvic_enable_irq(NVIC_ADC1_2_IRQ);
-        nvic_set_priority(NVIC_ADC1_2_IRQ, 0);
+        nvic_enable_irq(NVIC_DMA1_CHANNEL1_IRQ);
+        nvic_set_priority(NVIC_DMA1_CHANNEL1_IRQ, 0);
 
  
 	/*
