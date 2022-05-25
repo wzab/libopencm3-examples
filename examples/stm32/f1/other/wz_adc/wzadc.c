@@ -47,6 +47,10 @@ static uint16_t adc_data[ADC_SQR_MAX_CHANNELS_REGULAR];
 static uint32_t smp_prescaler = 0;
 static uint32_t smp_period = 0;
 
+static uint16_t tx_buf[64];
+static uint8_t tx_buf_busy = 0;
+static uint8_t tx_error = 0;
+
 static usbd_device *usbd_dev;
 
 const struct usb_device_descriptor dev_descr = {
@@ -265,6 +269,8 @@ static void wz_tim3_read(void)
 static void wz_adc_start(void)
 {
     adc_disable_dma(ADC1);
+    tx_buf_busy = 0;
+    tx_error = 0;
     // Prepare DMA
     dma_disable_channel(DMA1, DMA_CHANNEL1);
  
@@ -342,6 +348,14 @@ static void adccfg_data_rx_cb(usbd_device *usbd_dev, uint8_t ep)
 void dma1_channel1_isr(void) {
    dma_clear_interrupt_flags(DMA1, DMA_CHANNEL1, DMA_IFCR_CGIF1);
    gpio_toggle(GPIOC,GPIO13);
+   //Here we copy the data to the transmission buffer
+   if(tx_buf_busy) {
+     //Overrun
+     tx_error = 1;
+   } else {
+     memcpy(tx_buf,adc_data,2*nof_chan);
+     tx_buf_busy = 1;
+   }
 }
 
 static void adc_set_config(usbd_device *dev, uint16_t wValue)
@@ -434,15 +448,17 @@ int main(void)
 	while (1){
 		  usbd_poll(usbd_dev);
 		  //Check if there is ADC data frame to be sent
+		  if(tx_error) {
+		      char msg[] = "E:OVR";
+		      wz_adc_stop();
+		      tx_buf_busy = 0;
+		      tx_error = 0;
+                      while(!usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg))) {};
+                  } else if(tx_buf_busy){
+                      while(!usbd_ep_write_packet(usbd_dev,0x82,tx_buf,2*nof_chan)){};
+                      tx_buf_busy = 0;           		      
+		  }
 		}
-}
-
-void start_adc(void)
-{
-    adc_set_regular_sequence(ADC1,nof_chan,chans);
-    adc_set_single_conversion_mode(ADC1);
-    adc_enable_scan_mode(ADC1);
-    
 }
 
 void sys_tick_handler(void)
