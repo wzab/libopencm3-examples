@@ -25,6 +25,7 @@
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/cm3/systick.h>
 #include <libopencm3/stm32/rcc.h>
+#include <libopencm3/stm32/f1/nvic.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/adc.h>
 #include <libopencm3/stm32/timer.h>
@@ -247,6 +248,13 @@ static void wz_adc_stop(void)
    }     
 }
 
+static void wz_adc_read(void)
+{
+  	  usbd_ep_write_packet(usbd_dev,0x82,adc_data,2*nof_chan);	        
+          return;
+}
+
+
 static void wz_adc_start(void)
 {
     adc_disable_dma(ADC1);
@@ -278,6 +286,11 @@ static void wz_adc_start(void)
     timer_set_period(TIM1,smp_period);
     timer_set_master_mode(TIM1, TIM_CR2_MMS_UPDATE);
     timer_enable_counter(TIM1);
+    {
+          char msg[]="OK";
+  	  usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));	        
+          return;
+   }
 }
 
 static void adccfg_data_rx_cb(usbd_device *usbd_dev, uint8_t ep)
@@ -300,9 +313,12 @@ static void adccfg_data_rx_cb(usbd_device *usbd_dev, uint8_t ep)
 	    case 3: // Start
 	      wz_adc_start();
 	      break;
+	    case 4: // Read data
+	      wz_adc_read();
+	      break;
 	    default: // Unknown command
 	      {
-	        char msg[64]="E:Unknown command!";
+	        char msg[]="E:Unknown command!";
   	        usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));	        
 	      }
 	  } 
@@ -377,7 +393,10 @@ int main(void)
         adc_reset_calibration(ADC1);
         adc_calibrate_async(ADC1);
         while (adc_is_calibrating(ADC1)) {};
-        
+        nvic_enable_irq(NVIC_ADC1_2_IRQ);
+        nvic_set_priority(NVIC_ADC1_2_IRQ, 0);
+
+ 
 	/*
 	 * This is a somewhat common cheap hack to trigger device re-enumeration
 	 * on startup.  Assuming a fixed external pullup on D+, (For USB-FS)

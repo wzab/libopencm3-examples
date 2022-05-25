@@ -41,18 +41,6 @@ for bus in busses:
 						print ("        Max packet size:",ep.maxPacketSize)
 						print ("        Interval:",ep.interval)
 
-def readint():
-   f.bulkWrite(1,"\004")
-   print(f.bulkRead(2,30,500))
-def id():
-   f.bulkWrite(1,"\000")
-   print(f.bulkRead(2,30,500))
-
-def stop():
-   f.bulkWrite(1,"\003")
-   print(f.bulkRead(2,30,500))
-
-
 def prstr(s):
    l=""
    for i in s:
@@ -63,40 +51,17 @@ def prstr(s):
        l+=chr(i)
    print (l)
 
+def cmd(c):
+   f.bulkWrite(1,c)
+   rsp = f.bulkRead(0x82,64,500)
+   print(rsp)
+   prstr(rsp)
+   
+
 f=mydev.open()
 f.setConfiguration(mydev.configurations[0])
 f.claimInterface(0)
-while True:
-   f.bulkWrite(1,"To ja\000")
-   for i in range(3):
-      s=f.bulkRead(0x82,30,500)
-      print(s)
-      prstr(s)
+cmd("\002\001\004\001\001\001\000\000\000")
+cmd("\001\002\000\001")
+cmd("\003")
 
-if False:
-  adc_cfg=chr(1)
-  adc_cfg += chr(1)+chr(127)+chr(0) #Frequency
-  adc_cfg += chr(0)+chr(1)+chr(2)+chr(33)+chr(34)+chr(5)+chr(6)+chr(7)+chr(0)
-  #adc_cfg = (1,0,128,128,1,2,3,3,255,5,6,7)
-  f.bulkWrite(1,adc_cfg)
-  s=f.bulkRead(2,30,500)
-  prstr(s)
-  print(s)
-  f.bulkWrite(1,"\005")
-  s=f.bulkRead(2,30,500)
-  print(s)
-  print ("stop")
-  f.bulkWrite(1,"\003")
-  s=f.bulkRead(2,30,500)
-  print(s)
-  print("start")
-  f.bulkWrite(1,"\002")
-  s=f.bulkRead(2,30,5000)
-  print(s)
-  p=0
-  while True:
-     s=f.bulkRead(2,3000)
-     p+=1
-     print ([ "%2.2x" % (i+256*(i<0))  for i in s[0:len(s)]])
-     #prstr(s)
-    
