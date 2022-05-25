@@ -21,11 +21,14 @@
  */
 
 #include <stdlib.h>
+#include <time.h>
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/cm3/systick.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/adc.h>
+#include <libopencm3/stm32/timer.h>
+#include <libopencm3/stm32/dma.h>
 #include <libopencm3/usb/usbd.h>
 #include <libopencm3/usb/hid.h>
 
@@ -36,6 +39,12 @@
 #include <libopencm3/cm3/scb.h>
 #include <libopencm3/usb/dfu.h>
 #endif
+
+static uint8_t nof_chan = 0;
+static uint8_t chans[ADC_SQR_MAX_CHANNELS_REGULAR];
+static uint16_t adc_data[ADC_SQR_MAX_CHANNELS_REGULAR];
+static uint32_t smp_prescaler = 0;
+static uint32_t smp_period = 0;
 
 static usbd_device *usbd_dev;
 
@@ -176,21 +185,6 @@ static enum usbd_request_return_codes dfu_control_request(usbd_device *dev, stru
 }
 #endif
 
-static enum usbd_request_return_codes adc_control_request(usbd_device *dev, struct usb_setup_data *req, uint8_t **buf, uint16_t *len,
-			void (**complete)(usbd_device *, struct usb_setup_data *))
-{
-	(void)complete;
-	(void)dev;
-
-	if((req->bmRequestType != 0x81) ||
-	   (req->bRequest != USB_REQ_GET_DESCRIPTOR) ||
-	   (req->wValue != 0x2200))
-		return USBD_REQ_NOTSUPP;
-
-	return USBD_REQ_HANDLED;
-}
-
-
 static uint16_t read_adc(uint8_t channel) {
      adc_set_sample_time(ADC1,channel,ADC_SMPR_SMP_1DOT5CYC);
      adc_set_regular_sequence(ADC1,1,&channel);
@@ -199,20 +193,127 @@ static uint16_t read_adc(uint8_t channel) {
      return adc_read_regular(ADC1);
 }
 
+static void wz_adc_set_chans(uint8_t *buf, int len)
+{
+     //The first byte should contain the number of channels
+     uint8_t nch = buf[0];
+     nof_chan = 0;
+     if(nch != len-1) {
+	 char msg[]="E:wrong length";
+  	 usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));	        
+         return;
+     }
+     for(uint8_t i = 0; i < nch ; i++) {
+        if (buf[i+1] > ADC_CHANNEL18) {
+	  char msg[]="E:wrong channel";
+  	  usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));	        
+          return;
+        }
+        chans[i] = buf[i+1];
+     }
+     nof_chan = nch;
+   {
+          char msg[]="OK";
+  	  usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));	        
+          return;
+   }
+}
+
+static void wz_adc_set_freq(uint8_t *buf, int len)
+{
+   if(len != 8) {
+          char msg[]="E:wrong length";
+  	  usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));	        
+          return;
+       }
+   smp_prescaler = buf[0] + 256 * (uint32_t) buf[1];
+   smp_period = buf[2]+256*(buf[3]+256*(buf[4]+256*(uint32_t)buf[5]));
+   {
+          char msg[]="OK";
+  	  usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));	        
+          return;
+   }
+}
+
+
+static void wz_adc_stop(void)
+{
+   timer_disable_counter(TIM1);
+   adc_disable_dma(ADC1);
+   {
+          char msg[]="OK";
+  	  usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));	        
+          return;
+   }     
+}
+
+static void wz_adc_start(void)
+{
+    adc_disable_dma(ADC1);
+    // Prepare DMA
+    dma_disable_channel(DMA1, DMA_CHANNEL1);
+ 
+    dma_enable_circular_mode(DMA1, DMA_CHANNEL1);
+    dma_enable_memory_increment_mode(DMA1, DMA_CHANNEL1);
+ 
+    dma_set_peripheral_size(DMA1, DMA_CHANNEL1, DMA_CCR_PSIZE_16BIT);
+    dma_set_memory_size(DMA1, DMA_CHANNEL1, DMA_CCR_MSIZE_16BIT);
+ 
+    dma_set_read_from_peripheral(DMA1, DMA_CHANNEL1);
+    dma_set_peripheral_address(DMA1, DMA_CHANNEL1, (uint32_t) &ADC_DR(ADC1));
+ 
+    dma_set_memory_address(DMA1, DMA_CHANNEL1, (uint32_t) &adc_data);
+    dma_set_number_of_data(DMA1, DMA_CHANNEL1, nof_chan);
+ 
+    dma_enable_transfer_complete_interrupt(DMA1, DMA_CHANNEL1);
+    
+    adc_set_regular_sequence(ADC1,nof_chan,chans);
+    adc_enable_dma(ADC1);
+    //delay(100);
+    adc_enable_external_trigger_regular(ADC1,ADC_CR2_EXTSEL_TIM1_CC1);
+    // Prepare the TIMER1 for operation
+    timer_set_mode(TIM1, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+    timer_continuous_mode(TIM1);
+    timer_set_prescaler(TIM1,smp_prescaler);
+    timer_set_period(TIM1,smp_period);
+    timer_set_master_mode(TIM1, TIM_CR2_MMS_UPDATE);
+    timer_enable_counter(TIM1);
+}
+
 static void adccfg_data_rx_cb(usbd_device *usbd_dev, uint8_t ep)
 {
 	(void)ep;
-
-	char buf[64];
-	char msg[] = "Odebralem 2:";
+	uint8_t buf[64];
 	int len = usbd_ep_read_packet(usbd_dev, 0x01, buf, 64);
 	if(len) {
-	  usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));
-	  while(usbd_ep_write_packet(usbd_dev,0x82,buf,len)==0){};
-	  sprintf(buf,"0:%4.4x 1:%4.4x",read_adc(0),read_adc(1));
-	  while(usbd_ep_write_packet(usbd_dev,0x82,buf,strlen(buf))==0){};
-	  }
+	  //Check the type of command
+	  switch(buf[0]) {
+	    case 0: // Stop
+ 	      wz_adc_stop();
+	      break;
+	    case 1: // Set channels
+	      wz_adc_set_chans(&buf[1],len-1);
+	      break;
+	    case 2: // Set frequency
+	      wz_adc_set_freq(&buf[1],len-1);
+	      break;
+	    case 3: // Start
+	      wz_adc_start();
+	      break;
+	    default: // Unknown command
+	      {
+	        char msg[64]="E:Unknown command!";
+  	        usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));	        
+	      }
+	  } 
+	}
 }
+
+void dma1_channel1_isr(void) {
+   dma_clear_interrupt_flags(DMA1, DMA_CHANNEL1, DMA_IFCR_CGIF1);
+   gpio_toggle(GPIOC,GPIO13);
+}
+
 static void adc_set_config(usbd_device *dev, uint16_t wValue)
 {
 	(void)wValue;
@@ -248,8 +349,17 @@ int main(void)
 	gpio_set_mode(GPIOA,
 	GPIO_MODE_INPUT,
 	GPIO_CNF_INPUT_ANALOG, // Analog mode
-        GPIO0|GPIO1); // PA0 & PA1
-
+        GPIO0|GPIO1|GPIO2|GPIO3|GPIO4|GPIO5|GPIO6|GPIO7); // PA0 .. PA7
+	rcc_periph_clock_enable(RCC_GPIOC);
+	gpio_set_mode(GPIOC,
+	GPIO_MODE_OUTPUT_2_MHZ,
+	GPIO_CNF_OUTPUT_PUSHPULL,
+        GPIO13); // PC13
+	
+        // Initialize DMA
+        rcc_periph_clock_enable(RCC_DMA1);
+        // Initialize TIMER1
+        rcc_periph_clock_enable(RCC_TIM1);
         // Initialize ADC:
         rcc_peripheral_enable_clock(&RCC_APB2ENR,RCC_APB2ENR_ADC1EN);
         adc_power_off(ADC1);
@@ -287,8 +397,18 @@ int main(void)
 	usbd_dev = usbd_init(&st_usbfs_v1_usb_driver, &dev_descr, &config, usb_strings, 3, usbd_control_buffer, sizeof(usbd_control_buffer));
 	usbd_register_set_config_callback(usbd_dev, adc_set_config);
 
-	while (1)
-		usbd_poll(usbd_dev);
+	while (1){
+		  usbd_poll(usbd_dev);
+		  //Check if there is ADC data frame to be sent
+		}
+}
+
+void start_adc(void)
+{
+    adc_set_regular_sequence(ADC1,nof_chan,chans);
+    adc_set_single_conversion_mode(ADC1);
+    adc_enable_scan_mode(ADC1);
+    
 }
 
 void sys_tick_handler(void)
