@@ -1,10 +1,13 @@
 #!/usr/bin/env python
 # -*- encoding=iso-8859-2 -*-
-# Enumerate usb devices
-#
-#Copyright 2005 Wander Lairson Costa
+# Written by Wojciech M. Zabołotny <wzab01@gmail.com>
+# Copyritght 2022 W.M. Zaabołotny
+# The enumeration of usb devices
+# Copyright 2005 Wander Lairson Costa
 
 import usb
+import struct
+
 
 busses = usb.busses()
 
@@ -56,12 +59,34 @@ def cmd(c):
    rsp = f.bulkRead(0x82,64,500)
    print(rsp)
    prstr(rsp)
+
+def setsmp(presc,per):
+   c = struct.pack("<BLL",2,presc,per)
+   cmd(c)
    
+def setchans(chans):
+   fmt = "<"+str(2+len(chans))+"B"
+   c = struct.pack(fmt,1,len(chans),*chans)
+   print(fmt)
+   print(c)
+   cmd(c)
+
+def start():
+   c = b"\x03"
+   cmd(c)
+   
+def stop():
+   c = b"\x00"
+   cmd(c)
+  
 
 f=mydev.open()
 f.setConfiguration(mydev.configurations[0])
 f.claimInterface(0)
-cmd(b"\002\001\004\001\001\001\000\000\000")
-cmd(b"\001\002\000\001")
-cmd(b"\003")
+# Program the frequency
+
+setsmp(128,1000)
+setchans((0,4,3,1))
+start()
+
 
