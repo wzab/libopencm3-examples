@@ -97,6 +97,7 @@ class receiver(threading.Thread):
          # Now we just print them out.
          if rsp[0] == ord("D"):
             lout=""
+            print(rsp)
             # This are the sample data
             data = numpy.roll(data,-1,0)
             for i in range(nchans):

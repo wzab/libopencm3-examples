@@ -48,7 +48,7 @@ static uint16_t adc_data[ADC_SQR_MAX_CHANNELS_REGULAR];
 static uint32_t smp_prescaler = 0;
 static uint32_t smp_period = 0;
 
-static uint16_t tx_buf[64];
+static uint8_t tx_buf[64];
 static uint8_t tx_buf_busy = 0;
 static uint8_t tx_error = 0;
 static uint8_t tx_end = 0;
