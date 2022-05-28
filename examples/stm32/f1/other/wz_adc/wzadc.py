@@ -11,6 +11,10 @@ import usb.core
 import usb.util
 import threading
 import struct
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import numpy
+
 global eps
 # find our device
 dev = usb.core.find(idVendor=0xabba, idProduct=0x5301)
@@ -84,6 +88,8 @@ def stop():
 class receiver(threading.Thread):
    def run(self):
      global eps
+     global nchans
+     global data
      while True:
        try:
          rsp = eps[2].read(64)
@@ -92,19 +98,37 @@ class receiver(threading.Thread):
          if rsp[0] == ord("D"):
             lout=""
             # This are the sample data
-            for i in range(1,len(rsp),2):
-               lout += str(rsp[i]+256*rsp[i+1])+","
-            print(lout)
+            data = numpy.roll(data,-1,0)
+            for i in range(nchans):
+              data[plotlen-1,i] = 256*rsp[2*i+1]+rsp[2*i+2]
          else:
             # This is the start or end message
             print("".join([chr(i) for i in rsp]))
        except Exception as e:
          print(str(e))
-         pass  
-         
+         pass      
+
+plotlen = 200
+xs = numpy.array([i for i in range(plotlen)])
+chans = (0,1,2,3,4)
+nchans = len(chans)
+data = numpy.zeros((plotlen,nchans),dtype=int)        
 setsmp(1000,1000)
-setchans((0,3,2,1))
+setchans(chans)
+
+fig = plt.figure()
+#creating a subplot 
+ax1 = fig.add_subplot(1,1,1)
+lines = plt.plot(xs,data)
+
 t=receiver()
 t.start()
 start()
-
+while True:
+   for i in range(nchans):
+      lines[i].set_ydata(data[:,i])
+   plt.gca().relim()
+   plt.gca().autoscale_view()
+   fig.show()
+   plt.pause(0.01) 
+        
