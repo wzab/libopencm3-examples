@@ -1,48 +1,49 @@
 #!/usr/bin/env python
 # -*- encoding=iso-8859-2 -*-
 # Written by Wojciech M. Zabołotny <wzab01@gmail.com>
-# Copyritght 2022 W.M. Zaabołotny
-# The enumeration of usb devices
-# Copyright 2005 Wander Lairson Costa
+# Copyleft 2022 W.M. Zabołotny
+# This is a PUBLIC DOMAIN code
+#
+# The code is somehow based on:
+# https://stackoverflow.com/questions/44290837/how-to-interact-with-usb-device-using-pyusb
 
-import usb
+import usb.core
+import usb.util
+import threading
 import struct
+global eps
+# find our device
+dev = usb.core.find(idVendor=0xabba, idProduct=0x5301)
 
+# was it found?
+if dev is None:
+    raise ValueError('Device not found')
 
-busses = usb.busses()
+# free up the device from the kernel
+for cfg in dev:
+    for intf in cfg:
+        if dev.is_kernel_driver_active(intf.bInterfaceNumber):
+            try:
+                dev.detach_kernel_driver(intf.bInterfaceNumber)
+            except usb.core.USBError as e:
+                sys.exit("Could not detach kernel driver from interface({0}): {1}".format(intf.bInterfaceNumber, str(e)))
 
-for bus in busses:
-	devices = bus.devices
-	for dev in devices:
-		if dev.idVendor==0xabba and dev.idProduct==0x5301:
-		   print("To jest nasze urzzenie!")
-		   mydev=dev
-		print("Device:", dev.filename)
-		print("  Device class:",dev.deviceClass)
-		print("  Device sub class:",dev.deviceSubClass)
-		print("  Device protocol:",dev.deviceProtocol)
-		print("  Max packet size:",dev.maxPacketSize)
-		print("  idVendor:",dev.idVendor)
-		print("  idProduct:",dev.idProduct)
-		print("  Device Version:",dev.deviceVersion)
-		for config in dev.configurations:
-			print ("  Configuration:", config.value)
-			print ("    Total length:", config.totalLength)
-			print ("    selfPowered:", config.selfPowered)
-			print ("    remoteWakeup:", config.remoteWakeup)
-			print ("    maxPower:", config.maxPower)
-			for intf in config.interfaces:
-				print ("    Interface:",intf[0].interfaceNumber)
-				for alt in intf:
-					print ("    Alternate Setting:",alt.alternateSetting)
-					print ("      Interface class:",alt.interfaceClass)
-					print ("      Interface sub class:",alt.interfaceSubClass)
-					print ("      Interface protocol:",alt.interfaceProtocol)
-					for ep in alt.endpoints:
-						print ("      Endpoint:",hex(ep.address))
-						print ("        Type:",ep.type)
-						print ("        Max packet size:",ep.maxPacketSize)
-						print ("        Interval:",ep.interval)
+# try default conf
+print("setting configuration")
+dev.set_configuration()
+print("config set")
+
+print("trying to claim device")
+try:
+    usb.util.claim_interface(dev, 0)
+    print("claimed device")
+except usb.core.USBError as e:
+    print("Error occurred claiming " + str(e))
+    sys.exit("Error occurred on claiming")
+print("device claimed")
+cfg=dev.get_active_configuration()
+intf=cfg.interfaces()
+eps=intf[0].endpoints()
 
 def prstr(s):
    l=""
@@ -55,8 +56,8 @@ def prstr(s):
    print (l)
 
 def cmd(c):
-   f.bulkWrite(1,c)
-   rsp = f.bulkRead(0x82,64,500)
+   eps[0].write(c)
+   rsp = eps[1].read(64)
    print(rsp)
    prstr(rsp)
 
@@ -78,15 +79,32 @@ def start():
 def stop():
    c = b"\x00"
    cmd(c)
-  
 
-f=mydev.open()
-f.setConfiguration(mydev.configurations[0])
-f.claimInterface(0)
-# Program the frequency
 
-setsmp(128,1000)
-setchans((0,4,3,1))
+class receiver(threading.Thread):
+   def run(self):
+     global eps
+     while True:
+       try:
+         rsp = eps[2].read(64)
+         # Maybe we should do something better with the received values...
+         # Now we just print them out.
+         if rsp[0] == ord("D"):
+            lout=""
+            # This are the sample data
+            for i in range(1,len(rsp),2):
+               lout += str(rsp[i]+256*rsp[i+1])+","
+            print(lout)
+         else:
+            # This is the start or end message
+            print("".join([chr(i) for i in rsp]))
+       except Exception as e:
+         print(str(e))
+         pass  
+         
+setsmp(1000,1000)
+setchans((0,3,2,1))
+t=receiver()
+t.start()
 start()
-
 

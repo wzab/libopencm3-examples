@@ -22,6 +22,7 @@
 
 #include <stdlib.h>
 #include <time.h>
+#include <string.h>
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/cm3/systick.h>
 #include <libopencm3/stm32/rcc.h>
@@ -50,6 +51,7 @@ static uint32_t smp_period = 0;
 static uint16_t tx_buf[64];
 static uint8_t tx_buf_busy = 0;
 static uint8_t tx_error = 0;
+static uint8_t tx_end = 0;
 
 static usbd_device *usbd_dev;
 
@@ -83,6 +85,13 @@ static const struct usb_endpoint_descriptor adc_endp[] = {{
     .bEndpointAddress = 0x82,
     .bmAttributes = USB_ENDPOINT_ATTR_BULK,
     .wMaxPacketSize = 64,
+  },{
+
+    .bLength = USB_DT_ENDPOINT_SIZE,
+    .bDescriptorType = USB_DT_ENDPOINT,
+    .bEndpointAddress = 0x83,
+    .bmAttributes = USB_ENDPOINT_ATTR_BULK,
+    .wMaxPacketSize = 64,
   }};
 
 const struct usb_interface_descriptor adc_iface = {
@@ -90,7 +99,7 @@ const struct usb_interface_descriptor adc_iface = {
   .bDescriptorType = USB_DT_INTERFACE,
   .bInterfaceNumber = 0,
   .bAlternateSetting = 0,
-  .bNumEndpoints = 2,
+  .bNumEndpoints = 3,
   .bInterfaceClass = USB_CLASS_VENDOR,
   .bInterfaceSubClass = 0xff,
   .bInterfaceProtocol = 0xff,
@@ -174,8 +183,9 @@ static void dfu_detach_complete(usbd_device *dev, struct usb_setup_data *req)
   scb_reset_core();
 }
 
-static enum usbd_request_return_codes dfu_control_request(usbd_device *dev, struct usb_setup_data *req, uint8_t **buf, uint16_t *len,
-							  void (**complete)(usbd_device *, struct usb_setup_data *))
+static enum usbd_request_return_codes dfu_control_request(usbd_device *dev, 
+  struct usb_setup_data *req, uint8_t **buf, uint16_t *len,
+  void (**complete)(usbd_device *, struct usb_setup_data *))
 {
   (void)buf;
   (void)len;
@@ -245,6 +255,7 @@ static void wz_adc_stop(void)
 {
   timer_disable_counter(TIM3);
   adc_disable_dma(ADC1);
+  tx_end = 1;
   {
     char msg[]="OK";
     usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));	        
@@ -305,7 +316,9 @@ static void wz_adc_start(void)
   timer_enable_counter(TIM3);
   {
     char msg[]="OK";
+    char msg2[]="START";
     usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg));	        
+    while(!usbd_ep_write_packet(usbd_dev,0x83,msg2,sizeof(msg2))){};	        
     return;
   }
 }
@@ -353,7 +366,8 @@ void dma1_channel1_isr(void) {
     //Overrun
     tx_error = 1;
   } else {
-    memcpy(tx_buf,adc_data,2*nof_chan);
+    tx_buf[0]='D';
+    memcpy(&tx_buf[1],adc_data,2*nof_chan);
     tx_buf_busy = 1;
   }
 }
@@ -365,6 +379,7 @@ static void adc_set_config(usbd_device *dev, uint16_t wValue)
 
   usbd_ep_setup(dev, 0x01, USB_ENDPOINT_ATTR_BULK, 64, adccfg_data_rx_cb);
   usbd_ep_setup(dev, 0x82, USB_ENDPOINT_ATTR_BULK, 64, NULL);
+  usbd_ep_setup(dev, 0x83, USB_ENDPOINT_ATTR_BULK, 64, NULL);
   /*usbd_register_control_callback(
     dev,
     USB_REQ_TYPE_STANDARD | USB_REQ_TYPE_INTERFACE,
@@ -453,10 +468,15 @@ int main(void)
       wz_adc_stop();
       tx_buf_busy = 0;
       tx_error = 0;
-      while(!usbd_ep_write_packet(usbd_dev,0x82,msg,sizeof(msg))) {};
+      while(!usbd_ep_write_packet(usbd_dev,0x83,msg,sizeof(msg))) {};
     } else if(tx_buf_busy){
-      while(!usbd_ep_write_packet(usbd_dev,0x82,tx_buf,2*nof_chan)){};
+      while(!usbd_ep_write_packet(usbd_dev,0x83,tx_buf,1+2*nof_chan)){};
       tx_buf_busy = 0;           		      
+    }
+    if(tx_end) {
+       char msg[] = "O:END";  
+       while(!usbd_ep_write_packet(usbd_dev,0x83,msg,sizeof(msg))){}; 
+       tx_end = 0;   
     }
   }
 }
