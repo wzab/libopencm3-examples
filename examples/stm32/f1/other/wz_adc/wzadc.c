@@ -299,9 +299,9 @@ static void wz_adc_start(void)
  
   dma_enable_transfer_complete_interrupt(DMA1, DMA_CHANNEL1);
     
-  adc_set_regular_sequence(ADC1,nof_chan,chans);
   adc_set_single_conversion_mode(ADC1);
   adc_enable_scan_mode(ADC1);
+  adc_set_regular_sequence(ADC1,nof_chan,chans);
   adc_enable_dma(ADC1);
   dma_enable_channel(DMA1, DMA_CHANNEL1);
   //delay(100);
