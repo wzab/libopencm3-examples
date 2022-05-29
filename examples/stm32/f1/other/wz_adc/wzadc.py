@@ -12,10 +12,25 @@ import usb.util
 import threading
 import struct
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
 import numpy
+import signal
+import time
 
-global eps
+# Globals are kept in a single variable 
+# That trick enables accessing them from 
+# various routines...
+
+class glbs:
+  pass
+glb = glbs()
+
+glb.runplot = True
+glb.runrcv = True
+
+def on_sig_int(sig,frame):
+   glb.runplot = False
+
+signal.signal(signal.SIGINT, on_sig_int)
 # find our device
 dev = usb.core.find(idVendor=0xabba, idProduct=0x5301)
 
@@ -47,7 +62,7 @@ except usb.core.USBError as e:
 print("device claimed")
 cfg=dev.get_active_configuration()
 intf=cfg.interfaces()
-eps=intf[0].endpoints()
+glb.eps=intf[0].endpoints()
 
 def prstr(s):
    l=""
@@ -60,8 +75,8 @@ def prstr(s):
    print (l)
 
 def cmd(c):
-   eps[0].write(c)
-   rsp = eps[1].read(64)
+   glb.eps[0].write(c)
+   rsp = glb.eps[1].read(64)
    print(rsp)
    prstr(rsp)
 
@@ -87,21 +102,20 @@ def stop():
 
 class receiver(threading.Thread):
    def run(self):
-     global eps
-     global nchans
-     global data
-     while True:
+     while glb.runrcv:
        try:
-         rsp = eps[2].read(64)
-         # Maybe we should do something better with the received values...
-         # Now we just print them out.
+         rsp = glb.eps[2].read(64)
          if rsp[0] == ord("D"):
             lout=""
             print(rsp)
-            # This are the sample data
-            data = numpy.roll(data,-1,0)
-            for i in range(nchans):
-              data[plotlen-1,i] = 256*rsp[2*i+1]+rsp[2*i+2]
+            # Scroll the data. Please note that we may skip
+            # synchronization. The other thread either gets the
+            # old version of the data ro the new one.
+            # However, the associated CPU usage may be significant...
+            newdata = numpy.roll(glb.data,-1,0)
+            for i in range(glb.nchans):
+              newdata[plotlen-1,i] = 256*rsp[2*i+2]+rsp[2*i+1]
+            glb.data = newdata
          else:
             # This is the start or end message
             print("".join([chr(i) for i in rsp]))
@@ -109,27 +123,35 @@ class receiver(threading.Thread):
          print(str(e))
          pass      
 
+# Here we configure the paramers.
+# Length of the plot:
 plotlen = 200
 xs = numpy.array([i for i in range(plotlen)])
-chans = (0,1,2,3,4)
-nchans = len(chans)
-data = numpy.zeros((plotlen,nchans),dtype=int)        
+# List of the channels to be measured
+glb.chans = (4,3,2,1,0)
+glb.nchans = len(glb.chans)
+glb.data = numpy.zeros((plotlen,glb.nchans),dtype=int)        
+# Sampling frequency
 setsmp(1000,1000)
-setchans(chans)
+setchans(glb.chans)
 
 fig = plt.figure()
 #creating a subplot 
 ax1 = fig.add_subplot(1,1,1)
-lines = plt.plot(xs,data)
+lines = plt.plot(xs,glb.data)
 
 t=receiver()
 t.start()
 start()
-while True:
-   for i in range(nchans):
-      lines[i].set_ydata(data[:,i])
+while glb.runplot:
+   for i in range(glb.nchans):
+      lines[i].set_ydata(glb.data[:,i])
    plt.gca().relim()
    plt.gca().autoscale_view()
    fig.show()
    plt.pause(0.01) 
-        
+stop()
+time.sleep(2)
+glb.runrcv = False
+t.join()
+
